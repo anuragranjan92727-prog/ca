@@ -27,12 +27,30 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- NEW: Smart API Key Fetcher ---
+def get_api_key(key_name: str) -> str:
+    """
+    Fetches the API key from Streamlit Cloud Secrets first.
+    If it's not running on Cloud, it falls back to the local .env file.
+    """
+    try:
+        # Check Streamlit Secrets first
+        if key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        # If st.secrets throws an error (e.g., running locally without a .streamlit folder)
+        pass
+    
+    # Fallback to local environment / .env file
+    return os.getenv(key_name, "")
+
+
 class Settings(BaseSettings):
     gemini_keys: List[str] = Field(default_factory=lambda: [
-        os.getenv("GEMINI_API_KEY_1", ""),
-        os.getenv("GEMINI_API_KEY_2", ""),
-        os.getenv("GEMINI_API_KEY_3", ""),
-        os.getenv("GEMINI_API_KEY_4", "")
+        get_api_key("GEMINI_API_KEY_1"),
+        get_api_key("GEMINI_API_KEY_2"),
+        get_api_key("GEMINI_API_KEY_3"),
+        get_api_key("GEMINI_API_KEY_4")
     ])
     database_path: str = Field(default="ca_prediction.db")
     
