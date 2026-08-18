@@ -54,7 +54,7 @@ PAPERS = [
     "Paper 6: Financial Management and Strategic Management",
 ]
 
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 PAPER_ALIASES = {
     "advanced accounting": "Paper 1: Advanced Accounting",
