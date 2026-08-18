@@ -6,6 +6,7 @@ import hashlib
 import subprocess
 import tempfile
 import random
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -53,8 +54,7 @@ PAPERS = [
     "Paper 6: Financial Management and Strategic Management",
 ]
 
-# Updated to use the latest model requested by the API
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 PAPER_ALIASES = {
     "advanced accounting": "Paper 1: Advanced Accounting",
@@ -96,20 +96,20 @@ if "generated_report" not in st.session_state:
 # HELPERS
 # ============================================================
 
-def get_api_key() -> str:
-    """Read Gemini keys from Streamlit Secrets or environment and return one."""
+def get_api_keys() -> List[str]:
+    """Read Gemini keys from Streamlit Secrets or environment and return a list of available keys."""
     available_keys = []
     
     try:
-        # Check for the user's multiple keys
+        # Check for the user's multiple keys in sequential order
         for i in range(1, 5):
             key = st.secrets.get(f"GEMINI_API_KEY_{i}", "")
-            if key:
+            if key and key not in available_keys:
                 available_keys.append(key)
                 
         # Fallback to standard key just in case
         standard_key = st.secrets.get("GEMINI_API_KEY", "")
-        if standard_key:
+        if standard_key and standard_key not in available_keys:
             available_keys.append(standard_key)
     except Exception:
         pass
@@ -117,16 +117,13 @@ def get_api_key() -> str:
     # Also check OS environment variables 
     for i in range(1, 5):
         k = os.getenv(f"GEMINI_API_KEY_{i}", "")
-        if k:
+        if k and k not in available_keys:
             available_keys.append(k)
     k_orig = os.getenv("GEMINI_API_KEY", "")
-    if k_orig:
+    if k_orig and k_orig not in available_keys:
         available_keys.append(k_orig)
 
-    if available_keys:
-        # Pick a random key from the pool to distribute load and avoid rate limits
-        return random.choice(available_keys)
-    return ""
+    return available_keys
 
 
 def clean_json_text(text: str) -> str:
@@ -269,8 +266,7 @@ def extract_pdf(file_bytes: bytes) -> Tuple[str, float, str]:
     else:
         quality = min(100.0, 75.0 + min(chars_per_page, 1500) / 1500 * 25)
 
-    # Supplement with tables. This is where the previous code had the crash:
-    # fitz.io.BytesIO(...) is invalid; io.BytesIO(...) is correct.
+    # Supplement with tables
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             table_lines = []
@@ -313,31 +309,46 @@ def download_pdf(url: str) -> Tuple[str, bytes]:
 
 
 # ============================================================
-# GEMINI
+# GEMINI (WITH FALLBACK MECHANISM)
 # ============================================================
 
 class Gemini:
     def __init__(self) -> None:
-        self.key = get_api_key()
-        self.client = genai.Client(api_key=self.key) if (self.key and genai) else None
+        self.keys = get_api_keys()
 
     @property
     def available(self) -> bool:
-        return self.client is not None
+        return len(self.keys) > 0 and genai is not None
 
     def generate(self, prompt: str, temperature: float = 0.15) -> str:
-        if not self.client:
+        if not self.available:
             return ""
 
-        response = self.client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config={
-                "temperature": temperature,
-                "response_mime_type": "application/json",
-            },
-        )
-        return response.text or ""
+        last_error = None
+        
+        # Iterate sequentially through all provided API keys
+        for key in self.keys:
+            try:
+                client = genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=prompt,
+                    config={
+                        "temperature": temperature,
+                        "response_mime_type": "application/json",
+                    },
+                )
+                # If successful, immediately return the text
+                return response.text or ""
+            
+            except Exception as e:
+                # If key fails (e.g., 503 Unavailable, Quota exceeded), store error and try next key
+                last_error = e
+                time.sleep(1)  # Brief pause before next request to avoid hammering the API
+                continue
+
+        # If it reaches here, EVERY key has failed. Raise the last encountered error.
+        raise Exception(f"All {len(self.keys)} API keys failed. Last error: {last_error}")
 
 
 # ============================================================
@@ -1110,7 +1121,7 @@ def render():
 
             pdf_bytes, compile_message = compile_latex(
                 latex_source,
-                "ca_prediction_report",
+                "ca_intermediate_prediction",
             )
 
             if pdf_bytes:
