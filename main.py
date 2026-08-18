@@ -5,6 +5,7 @@ import json
 import hashlib
 import subprocess
 import tempfile
+import random
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -95,14 +96,36 @@ if "generated_report" not in st.session_state:
 # ============================================================
 
 def get_api_key() -> str:
-    """Read Gemini key from Streamlit Secrets first, then environment."""
+    """Read Gemini keys from Streamlit Secrets or environment and return one."""
+    available_keys = []
+    
     try:
-        key = st.secrets.get("GEMINI_API_KEY", "")
-        if key:
-            return key
+        # Check for the user's multiple keys
+        for i in range(1, 5):
+            key = st.secrets.get(f"GEMINI_API_KEY_{i}", "")
+            if key:
+                available_keys.append(key)
+                
+        # Fallback to standard key just in case
+        standard_key = st.secrets.get("GEMINI_API_KEY", "")
+        if standard_key:
+            available_keys.append(standard_key)
     except Exception:
         pass
-    return os.getenv("GEMINI_API_KEY", "")
+
+    # Also check OS environment variables 
+    for i in range(1, 5):
+        k = os.getenv(f"GEMINI_API_KEY_{i}", "")
+        if k:
+            available_keys.append(k)
+    k_orig = os.getenv("GEMINI_API_KEY", "")
+    if k_orig:
+        available_keys.append(k_orig)
+
+    if available_keys:
+        # Pick a random key from the pool to distribute load and avoid rate limits
+        return random.choice(available_keys)
+    return ""
 
 
 def clean_json_text(text: str) -> str:
@@ -911,7 +934,7 @@ def render():
 
     if not gemini.available:
         st.warning(
-            "Gemini API key is not configured. Add GEMINI_API_KEY to Streamlit Secrets "
+            "Gemini API key is not configured. Add GEMINI_API_KEY_1 (or up to 4 keys) to Streamlit Secrets "
             "for AI classification and prediction."
         )
 
